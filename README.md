@@ -60,7 +60,7 @@ cd backend
 pip install -r requirements.txt
 
 # Start the API server
-python simple_api.py
+py simple_api_minimal.py
 ```
 
 ### 3. Run Both Simultaneously (Recommended)
