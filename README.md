@@ -145,7 +145,7 @@ npm run build
 npm start
 
 # Backend should be deployed separately
-cd backend && python simple_api.py
+cd backend && py simple_api_minimal.py
 ```
 
 ## 🔌 Backend Integration
