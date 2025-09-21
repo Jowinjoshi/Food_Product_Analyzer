@@ -1,4 +1,4 @@
-# FoodHealth AI - Advanced Food Analysis & Health Prediction Platform
+# NutriScope - Advanced Food Analysis & Health Prediction Platform
 
 A comprehensive Next.js application that integrates with a Python ML backend to provide AI-powered food analysis, health risk prediction, and personalized nutritional insights.
 
