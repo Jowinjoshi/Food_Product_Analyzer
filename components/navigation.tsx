@@ -32,7 +32,7 @@ export default function Navigation() {
                 <Brain className="h-6 w-6 text-white" />
               </div>
               <span className="text-xl font-bold bg-gradient-to-r from-blue-600 to-green-600 bg-clip-text text-transparent">
-                FoodHealth AI
+                NutriScope
               </span>
             </Link>
           </div>

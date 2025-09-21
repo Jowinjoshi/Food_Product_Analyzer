@@ -8,7 +8,7 @@ import Navigation from '@/components/navigation';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'FoodHealth AI - Smart Food Analysis & Health Prediction',
+  title: 'NutriScope - Smart Food Analysis & Health Prediction',
   description: 'AI-powered food analysis and personalized health risk prediction platform',
 };
 
