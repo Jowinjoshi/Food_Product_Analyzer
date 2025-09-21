@@ -41,6 +41,10 @@ interface PredictionResult {
   risk_level: string;
   all_probabilities: Record<string, number>;
   recommendations: string[];
+  bmi_analysis?: string;
+  calorie_balance?: string;
+  nutrient_balance?: string;
+  health_score?: number;
 }
 
 const defaultMealData = {
@@ -523,23 +527,30 @@ export default function HealthAnalysisPage() {
                 {prediction && (
                   <div className="space-y-6">
                     {/* Primary Prediction */}
-                    <div className="text-center p-6 bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-950/20 dark:to-green-950/20 rounded-lg">
+                    <div className="text-center p-6 bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-950/20 dark:to-green-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
                       <div className="mb-4">
                         <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
                           {prediction.predicted_disease}
                         </h3>
-                        <Badge
-                          variant={getRiskBadgeVariant(prediction.risk_level)}
-                          className="text-sm px-3 py-1"
-                        >
-                          {prediction.risk_level} Risk
-                        </Badge>
+                        <div className="flex items-center justify-center space-x-3">
+                          <Badge
+                            variant={getRiskBadgeVariant(prediction.risk_level)}
+                            className="text-sm px-3 py-1"
+                          >
+                            {prediction.risk_level} Risk
+                          </Badge>
+                          {prediction.health_score && (
+                            <Badge variant="outline" className="text-sm px-3 py-1">
+                              Health Score: {prediction.health_score}/100
+                            </Badge>
+                          )}
+                        </div>
                       </div>
                       
                       <div className="mb-4">
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-medium">Confidence Level</span>
-                          <span className="text-sm font-medium">
+                          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Confidence Level</span>
+                          <span className="text-sm font-medium text-gray-900 dark:text-white">
                             {Math.round(prediction.confidence * 100)}%
                           </span>
                         </div>
@@ -550,26 +561,54 @@ export default function HealthAnalysisPage() {
                       </div>
                     </div>
 
+                    {/* Health Analysis Cards */}
+                    <div className="grid grid-cols-1 gap-4">
+                      {prediction.bmi_analysis && (
+                        <div className="p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                          <h4 className="text-lg font-semibold mb-2 text-blue-900 dark:text-blue-100">BMI Analysis</h4>
+                          <p className="text-sm text-blue-800 dark:text-blue-200">{prediction.bmi_analysis}</p>
+                        </div>
+                      )}
+                      
+                      {prediction.calorie_balance && (
+                        <div className="p-4 bg-green-50 dark:bg-green-950/20 rounded-lg border border-green-200 dark:border-green-800">
+                          <h4 className="text-lg font-semibold mb-2 text-green-900 dark:text-green-100">Calorie Balance</h4>
+                          <p className="text-sm text-green-800 dark:text-green-200">{prediction.calorie_balance}</p>
+                        </div>
+                      )}
+                      
+                      {prediction.nutrient_balance && (
+                        <div className="p-4 bg-purple-50 dark:bg-purple-950/20 rounded-lg border border-purple-200 dark:border-purple-800">
+                          <h4 className="text-lg font-semibold mb-2 text-purple-900 dark:text-purple-100">Nutrient Balance</h4>
+                          <p className="text-sm text-purple-800 dark:text-purple-200">{prediction.nutrient_balance}</p>
+                        </div>
+                      )}
+                    </div>
+
                     {/* All Probabilities */}
                     {prediction.all_probabilities && (
-                      <div>
-                        <h4 className="text-lg font-semibold mb-3">Risk Distribution</h4>
-                        <div className="space-y-2">
+                      <div className="p-4 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                        <h4 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Risk Distribution</h4>
+                        <div className="space-y-3">
                           {Object.entries(prediction.all_probabilities)
                             .sort(([,a], [,b]) => b - a)
                             .map(([disease, probability]) => (
-                              <div key={disease} className="flex items-center justify-between">
-                                <span className="text-sm text-gray-600 dark:text-gray-300">
+                              <div key={disease} className="flex items-center justify-between p-2 bg-white dark:bg-gray-800 rounded border">
+                                <span className="text-sm font-medium text-gray-700 dark:text-gray-300 min-w-0 flex-1">
                                   {disease}
                                 </span>
-                                <div className="flex items-center space-x-2">
-                                  <div className="w-24 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                                <div className="flex items-center space-x-3 ml-4">
+                                  <div className="w-20 bg-gray-200 dark:bg-gray-600 rounded-full h-2.5">
                                     <div
-                                      className={`h-2 rounded-full ${getRiskColor('medium')}`}
+                                      className={`h-2.5 rounded-full transition-all duration-300 ${
+                                        disease === 'Healthy' ? 'bg-green-500' : 
+                                        probability > 0.2 ? 'bg-red-500' : 
+                                        probability > 0.1 ? 'bg-yellow-500' : 'bg-blue-500'
+                                      }`}
                                       style={{ width: `${probability * 100}%` }}
                                     />
                                   </div>
-                                  <span className="text-sm font-medium w-12">
+                                  <span className="text-sm font-semibold text-gray-900 dark:text-white w-12 text-right">
                                     {Math.round(probability * 100)}%
                                   </span>
                                 </div>
@@ -581,29 +620,33 @@ export default function HealthAnalysisPage() {
 
                     {/* Recommendations */}
                     {prediction.recommendations && prediction.recommendations.length > 0 && (
-                      <div>
-                        <h4 className="text-lg font-semibold mb-3 flex items-center">
+                      <div className="p-4 bg-green-50 dark:bg-green-950/20 rounded-lg border border-green-200 dark:border-green-800">
+                        <h4 className="text-lg font-semibold mb-4 flex items-center text-green-900 dark:text-green-100">
                           <CheckCircle className="h-5 w-5 mr-2 text-green-600" />
-                          Recommendations
+                          Personalized Recommendations
                         </h4>
-                        <div className="space-y-2">
+                        <div className="space-y-3">
                           {prediction.recommendations.map((rec, index) => (
-                            <Alert key={index} className="border-green-200 dark:border-green-800">
-                              <AlertTriangle className="h-4 w-4" />
-                              <AlertDescription className="text-sm">
+                            <div key={index} className="flex items-start p-3 bg-white dark:bg-gray-800 rounded border border-green-200 dark:border-green-700">
+                              <div className="flex-shrink-0 w-6 h-6 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center mr-3 mt-0.5">
+                                <span className="text-xs font-bold text-green-600 dark:text-green-400">
+                                  {index + 1}
+                                </span>
+                              </div>
+                              <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
                                 {rec}
-                              </AlertDescription>
-                            </Alert>
+                              </p>
+                            </div>
                           ))}
                         </div>
                       </div>
                     )}
 
-                    {/* Additional Info */}
-                    <Alert>
-                      <AlertTriangle className="h-4 w-4" />
-                      <AlertDescription>
-                        <strong>Disclaimer:</strong> This analysis is for informational purposes only and should not replace professional medical advice. Consult with a healthcare provider for personalized medical guidance.
+                    {/* Disclaimer */}
+                    <Alert className="border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-950/20">
+                      <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                      <AlertDescription className="text-sm text-yellow-800 dark:text-yellow-200">
+                        <strong>Medical Disclaimer:</strong> This AI analysis is provided for informational and educational purposes only. It should not be used as a substitute for professional medical advice, diagnosis, or treatment. Always consult with qualified healthcare providers for personalized medical guidance and before making any health-related decisions.
                       </AlertDescription>
                     </Alert>
                   </div>

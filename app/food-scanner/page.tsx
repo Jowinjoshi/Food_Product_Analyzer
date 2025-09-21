@@ -37,6 +37,8 @@ export default function FoodScannerPage() {
   const [scanMode, setScanMode] = useState<'upload' | 'camera'>('upload');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [videoReady, setVideoReady] = useState(false);
+  const [isRequestingCamera, setIsRequestingCamera] = useState(false);
+  const [permissionState, setPermissionState] = useState<'prompt' | 'granted' | 'denied' | 'unknown'>('unknown');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -53,6 +55,45 @@ export default function FoodScannerPage() {
       setScannedResult(null);
     }
   };
+
+  // Check camera permission on component mount
+  const checkCameraPermission = async () => {
+    try {
+      // Check if we have stored permission state
+      const storedPermission = localStorage.getItem('camera-permission');
+      if (storedPermission && storedPermission === 'granted') {
+        setPermissionState('granted');
+      }
+
+      if (!navigator.permissions) {
+        setPermissionState('unknown');
+        return;
+      }
+
+      const permission = await navigator.permissions.query({ name: 'camera' as PermissionName });
+      const currentState = permission.state as 'prompt' | 'granted' | 'denied';
+      setPermissionState(currentState);
+      
+      // Store permission state
+      localStorage.setItem('camera-permission', currentState);
+      
+      // Listen for permission changes
+      permission.onchange = () => {
+        const newState = permission.state as 'prompt' | 'granted' | 'denied';
+        setPermissionState(newState);
+        localStorage.setItem('camera-permission', newState);
+        console.log('Camera permission changed to:', newState);
+      };
+    } catch (error) {
+      console.log('Permission API not supported, will check on camera access');
+      setPermissionState('unknown');
+    }
+  };
+
+  // Check permission on mount
+  useEffect(() => {
+    checkCameraPermission();
+  }, []);
 
   const simulateScanning = () => {
     if (!selectedImage) {
@@ -132,6 +173,7 @@ export default function FoodScannerPage() {
   const startCamera = async () => {
     setCameraError(null);
     setVideoReady(false);
+    setIsRequestingCamera(true);
     
     try {
       // Check if getUserMedia is supported
@@ -141,24 +183,40 @@ export default function FoodScannerPage() {
 
       console.log('Starting camera...');
 
-      // Simple constraints first
+      // Enhanced constraints for better compatibility
       const constraints = {
-        video: true,
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'environment' // Try to use back camera on mobile
+        },
         audio: false
       };
 
-      // Add timeout to prevent hanging on permission prompt
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Camera access timed out. Please check permissions.')), 15000);
-      });
+      // If permission was already granted, no need for timeout
+      const useTimeout = permissionState !== 'granted';
+      
+      let mediaStream: MediaStream;
+      
+      if (useTimeout) {
+        // Add timeout only if permission is not already granted
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Camera access timed out. Please check permissions.')), 10000);
+        });
 
-      const mediaStream = await Promise.race([
-        navigator.mediaDevices.getUserMedia(constraints),
-        timeoutPromise
-      ]);
+        mediaStream = await Promise.race([
+          navigator.mediaDevices.getUserMedia(constraints),
+          timeoutPromise
+        ]);
+      } else {
+        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      }
       
       console.log('Got media stream:', mediaStream);
 
+      // Update permission state on successful access
+      setPermissionState('granted');
+      localStorage.setItem('camera-permission', 'granted');
       setStream(mediaStream);
       setIsCameraActive(true);
       setScanMode('camera');
@@ -167,9 +225,29 @@ export default function FoodScannerPage() {
         console.log('Setting video source...');
         videoRef.current.srcObject = mediaStream;
         
-        // Simple approach - just play the video
+        // Wait for video to be ready
+        const videoReadyPromise = new Promise<void>((resolve, reject) => {
+          const video = videoRef.current!;
+          
+          const onLoadedData = () => {
+            video.removeEventListener('loadeddata', onLoadedData);
+            video.removeEventListener('error', onError);
+            resolve();
+          };
+          
+          const onError = (error: Event) => {
+            video.removeEventListener('loadeddata', onLoadedData);
+            video.removeEventListener('error', onError);
+            reject(new Error('Video loading failed'));
+          };
+          
+          video.addEventListener('loadeddata', onLoadedData);
+          video.addEventListener('error', onError);
+        });
+
         try {
           await videoRef.current.play();
+          await videoReadyPromise;
           console.log('Video playing successfully');
           setVideoReady(true);
           toast.success('Camera started successfully!');
@@ -190,13 +268,15 @@ export default function FoodScannerPage() {
       
       if (error instanceof Error) {
         if (error.name === 'NotAllowedError') {
-          errorMessage = 'Camera access denied. Please allow camera permissions in your browser settings and refresh the page.';
+          setPermissionState('denied');
+          localStorage.setItem('camera-permission', 'denied');
+          errorMessage = 'Camera access denied. Please click the camera icon in your browser\'s address bar and allow access, then try again.';
         } else if (error.name === 'NotFoundError') {
           errorMessage = 'No camera found on this device.';
         } else if (error.name === 'NotSupportedError') {
           errorMessage = 'Camera not supported in this browser.';
         } else if (error.message.includes('timed out')) {
-          errorMessage = 'Camera access timed out. Please check if you clicked "Allow" for camera permissions.';
+          errorMessage = 'Camera access timed out. Please ensure you click "Allow" when prompted for camera permissions.';
         } else {
           errorMessage += error.message;
         }
@@ -205,6 +285,8 @@ export default function FoodScannerPage() {
       setCameraError(errorMessage);
       toast.error(errorMessage);
       setIsCameraActive(false);
+    } finally {
+      setIsRequestingCamera(false);
     }
   };
 
@@ -220,6 +302,7 @@ export default function FoodScannerPage() {
     setIsCameraActive(false);
     setVideoReady(false);
     setCameraError(null);
+    setIsRequestingCamera(false);
     setScanMode('upload');
     
     if (videoRef.current) {
@@ -327,25 +410,67 @@ export default function FoodScannerPage() {
       const file = new File([blob], 'live-capture.jpg', { type: 'image/jpeg' });
       formData.append('image', file);
 
-      // Call the OCR API endpoint
+      // Use the combined AI + OCR approach
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
-      const response = await fetch(`${apiUrl}/api/scan_label`, {
-        method: 'POST',
-        body: formData,
-      });
+      let result: ScannedFood | null = null;
+      let analysisMethod = '';
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to scan label');
+      // First try AI analysis
+      try {
+        const aiResponse = await fetch(`${apiUrl}/api/ai_analyze`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (aiResponse.ok) {
+          const aiResult = await aiResponse.json();
+          result = {
+            name: aiResult.name,
+            confidence: aiResult.confidence,
+            nutritional_info: aiResult.nutritional_info,
+            health_score: aiResult.health_score,
+            processing_level: aiResult.processing_level,
+            recommendations: [
+              ...aiResult.recommendations,
+              `📸 Live Camera AI Analysis`,
+              `Food Category: ${aiResult.food_category}`,
+              ...(aiResult.ingredients?.length > 0 ? [`Ingredients: ${aiResult.ingredients.join(', ')}`] : []),
+              ...(aiResult.allergens?.length > 0 ? [`⚠️ Allergens: ${aiResult.allergens.join(', ')}`] : [])
+            ]
+          };
+          analysisMethod = 'AI Smart Analysis';
+        }
+      } catch (aiError) {
+        console.log('Live AI analysis failed, falling back to OCR:', aiError);
       }
 
-      const result = await response.json();
+      // Fallback to OCR if AI fails
+      if (!result || !result.nutritional_info || Object.keys(result.nutritional_info).length < 3) {
+        const ocrResponse = await fetch(`${apiUrl}/api/scan_label`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!ocrResponse.ok) {
+          const errorData = await ocrResponse.json();
+          throw new Error(errorData.error || 'Failed to scan label');
+        }
+
+        const ocrResult = await ocrResponse.json();
+        result = ocrResult;
+        analysisMethod = result ? `${analysisMethod ? analysisMethod + ' + ' : ''}OCR Analysis` : 'OCR Analysis';
+      }
+
+      if (!result) {
+        throw new Error('Both AI and OCR analysis failed. Please try with better lighting or closer to the label.');
+      }
+
       setScannedResult(result);
       
       // Stop camera after successful scan
       stopCamera();
       
-      toast.success('Label scanned successfully from camera!');
+      toast.success(`Label scanned from camera using ${analysisMethod}! 📸🤖`);
     } catch (error) {
       console.error('Live OCR scanning error:', error);
       toast.error(`Failed to scan label: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -377,6 +502,104 @@ export default function FoodScannerPage() {
       case 'ultra-processed': return 'bg-red-500';
       default: return 'bg-gray-500';
     }
+  };
+
+  const scanWithAI = async () => {
+    if (!selectedImage) {
+      toast.error('Please select an image first');
+      return;
+    }
+
+    setIsScanning(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('image', selectedImage);
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+
+      // First try AI analysis for comprehensive results
+      let result: ScannedFood | null = null;
+      let analysisMethod = '';
+
+      try {
+        // Use AI model for comprehensive food analysis
+        const aiResponse = await fetch(`${apiUrl}/api/ai_analyze`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (aiResponse.ok) {
+          const aiResult = await aiResponse.json();
+          
+          // Format AI result for display
+          result = {
+            name: aiResult.name,
+            confidence: aiResult.confidence,
+            nutritional_info: aiResult.nutritional_info,
+            health_score: aiResult.health_score,
+            processing_level: aiResult.processing_level,
+            recommendations: [
+              ...aiResult.recommendations,
+              `🤖 Powered by Advanced AI Model`,
+              `Food Category: ${aiResult.food_category}`,
+              ...(aiResult.ingredients?.length > 0 ? [`Ingredients: ${aiResult.ingredients.join(', ')}`] : []),
+              ...(aiResult.allergens?.length > 0 ? [`⚠️ Allergens: ${aiResult.allergens.join(', ')}`] : []),
+              ...(aiResult.health_analysis ? [`Health Analysis: ${aiResult.health_analysis}`] : [])
+            ]
+          };
+          analysisMethod = 'AI Smart Analysis';
+        }
+      } catch (aiError) {
+        console.log('AI analysis failed, falling back to OCR:', aiError);
+      }
+
+      // If AI fails or returns insufficient data, fallback to OCR
+      if (!result || !result.nutritional_info || Object.keys(result.nutritional_info).length < 3) {
+        try {
+          const ocrResponse = await fetch(`${apiUrl}/api/scan_label`, {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (ocrResponse.ok) {
+            const ocrResult = await ocrResponse.json();
+            result = ocrResult;
+            analysisMethod = result ? `${analysisMethod ? analysisMethod + ' + ' : ''}OCR Text Analysis` : 'OCR Text Analysis';
+          }
+        } catch (ocrError) {
+          console.error('OCR analysis also failed:', ocrError);
+        }
+      }
+
+      if (!result) {
+        throw new Error('Both AI and OCR analysis failed. Please try with a clearer image.');
+      }
+
+      setScannedResult(result);
+      toast.success(`Food scanned successfully using ${analysisMethod}! 🤖✨`);
+      
+    } catch (error) {
+      console.error('Combined scanning error:', error);
+      let errorMessage = 'Failed to analyze food with AI model';
+      
+      if (error instanceof Error) {
+        if (error.message.includes('fetch')) {
+          errorMessage = 'Cannot connect to backend server. Please make sure your Python backend is running on port 5000.';
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
+      toast.error(errorMessage);
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  // Legacy function for backward compatibility
+  const analyzeWithAI = async () => {
+    // Redirect to the new combined function
+    await scanWithAI();
   };
 
   return (
@@ -541,12 +764,23 @@ export default function FoodScannerPage() {
                                 ) : (
                                   <>
                                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-3"></div>
-                                    <p className="text-sm font-medium mb-2">Waiting for camera access...</p>
-                                    <div className="text-xs text-gray-300 space-y-1">
-                                      <p>📱 Look for camera permission popup</p>
-                                      <p>🔒 Check address bar for camera icon</p>
-                                      <p>✅ Click "Allow" when prompted</p>
-                                    </div>
+                                    {isRequestingCamera ? (
+                                      <>
+                                        <p className="text-sm font-medium mb-2">Requesting camera access...</p>
+                                        <div className="text-xs text-gray-300 space-y-1">
+                                          <p>📱 Look for permission popup</p>
+                                          <p>🔒 Check address bar for camera icon</p>
+                                          <p>✅ Click "Allow" when prompted</p>
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <p className="text-sm font-medium mb-2">Starting camera...</p>
+                                        <div className="text-xs text-gray-300">
+                                          <p>📹 Initializing video stream...</p>
+                                        </div>
+                                      </>
+                                    )}
                                     <Button
                                       onClick={stopCamera}
                                       size="sm"
@@ -594,45 +828,29 @@ export default function FoodScannerPage() {
                         Choose Image
                       </Button>
                       
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-3">
                         <Button
-                          onClick={scanWithOCR}
+                          onClick={scanWithAI}
                           size="lg"
                           disabled={!selectedImage || isScanning}
-                          className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
+                          className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
                         >
                           {isScanning ? (
                             <>
                               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                              Reading...
+                              Scanning...
                             </>
                           ) : (
                             <>
                               <Scan className="h-4 w-4 mr-2" />
-                              Scan Label (OCR)
+                              🤖 Scan Label (Smart OCR + AI)
                             </>
                           )}
                         </Button>
                         
-                        <Button
-                          onClick={simulateScanning}
-                          size="lg"
-                          disabled={!selectedImage || isScanning}
-                          variant="outline"
-                          className="border-purple-600 text-purple-600 hover:bg-purple-50"
-                        >
-                          {isScanning ? (
-                            <>
-                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600 mr-2" />
-                              Analyzing...
-                            </>
-                          ) : (
-                            <>
-                              <Scan className="h-4 w-4 mr-2" />
-                              AI Food Scan
-                            </>
-                          )}
-                        </Button>
+                        <div className="text-xs text-gray-500 text-center">
+                          • OCR text extraction • AI nutritional analysis • Health scoring • Ingredient detection
+                        </div>
                       </div>
                     </div>
                   ) : (
@@ -643,11 +861,24 @@ export default function FoodScannerPage() {
                           <Button
                             onClick={startCamera}
                             size="lg"
-                            className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+                            disabled={isRequestingCamera}
+                            className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50"
                           >
                             <Camera className="h-4 w-4 mr-2" />
-                            Start Camera
+                            {isRequestingCamera ? 'Starting...' : 
+                             permissionState === 'granted' ? 'Start Camera ✅' :
+                             permissionState === 'denied' ? 'Start Camera (Permission Needed)' :
+                             'Start Camera'}
                           </Button>
+                          
+                          {/* Permission status helper */}
+                          {permissionState === 'denied' && (
+                            <div className="text-xs text-orange-600 bg-orange-50 p-2 rounded border border-orange-200">
+                              <p className="font-medium">Camera Access Blocked</p>
+                              <p>Click the camera icon 🎥 in your browser's address bar and select "Allow"</p>
+                            </div>
+                          )}
+                          
                           <div className="grid grid-cols-2 gap-2">
                             <Button
                               onClick={async () => {
@@ -724,7 +955,7 @@ export default function FoodScannerPage() {
                               ) : (
                                 <>
                                   <Scan className="h-4 w-4 mr-2" />
-                                  Scan Now
+                                  🤖 Smart Scan
                                 </>
                               )}
                             </Button>
